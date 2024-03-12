@@ -44,6 +44,7 @@ python setup.py develop
 ## Training
 ### Data Preparation
 - Download the training dataset DF2K ([DIV2K](https://data.vision.ee.ethz.ch/cvl/DIV2K/) + [Flickr2K](https://cv.snu.ac.kr/research/EDSR/Flickr2K.tar)) and put them in the folder `./datasets`.
+- It's recommanded to refer to the data preparation from [BasicSR](https://github.com/XPixelGroup/BasicSR/blob/master/docs/DatasetPreparation.md) for faster data reading speed.
 
 ### Training Commands
 - Refer to the training configuration files in `./options/train` folder for detailed settings.
