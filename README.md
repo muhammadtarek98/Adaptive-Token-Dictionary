@@ -42,7 +42,7 @@ python setup.py develop
 ```
 
 ## Fast Inference
-Using ```inference.py``` for fast inference ATD on single image or multiple images within the same folder.
+Using ```inference.py``` for fast inference on single image or multiple images within the same folder.
 ```bash
 # For classical SR
 python inference.py -i test_image.png -o results/test/ --scale 4 --task classical
