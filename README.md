@@ -17,6 +17,7 @@ By Leheng Zhang, Yawei Li, Xingyu Zhou, Xiaorui Zhao, and Shuhang Gu.
 
 ## Contents
 1. [Enviroment](#environment)
+1. [Fast Inference](#fast-inference)
 1. [Training](#training)
 1. [Testing](#testing)
 1. [Results](#results)
@@ -39,6 +40,19 @@ conda activate ATD
 pip install -r requirements.txt
 python setup.py develop
 ```
+
+## Fast Inference
+Using ```inference.py``` for fast inference ATD on single image or multiple images within the same folder.
+```bash
+# For classical SR
+python inference.py -i test_image.png -o results/test/ --scale 4 --task classical
+python inference.py -i test_images/ -o results/test/ --scale 4 --task classical
+
+# For lightweight SR
+python inference.py -i test_image.png -o results/test/ --scale 4 --task lightweight
+python inference.py -i test_images/ -o results/test/ --scale 4 --task lightweight
+```
+The ATD SR model processes the image ```test_image.png``` or images within the ```test_images/``` directory. The results will be saved in the ```results/test/``` directory.
 
 
 ## Training
