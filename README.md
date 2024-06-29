@@ -139,13 +139,13 @@ python basicsr/test.py -opt options/test/103_ATD_light_SRx4_finetune.yml
 ## Citation
 
 ```
-@misc{zhang2024transcending,
-      title={Transcending the Limit of Local Window: Advanced Super-Resolution Transformer with Adaptive Token Dictionary}, 
-      author={Leheng Zhang and Yawei Li and Xingyu Zhou and Xiaorui Zhao and Shuhang Gu},
-      year={2024},
-      eprint={2401.08209},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV}
+@InProceedings{Zhang_2024_CVPR,
+    author    = {Zhang, Leheng and Li, Yawei and Zhou, Xingyu and Zhao, Xiaorui and Gu, Shuhang},
+    title     = {Transcending the Limit of Local Window: Advanced Super-Resolution Transformer with Adaptive Token Dictionary},
+    booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+    month     = {June},
+    year      = {2024},
+    pages     = {2856-2865}
 }
 ```
 
