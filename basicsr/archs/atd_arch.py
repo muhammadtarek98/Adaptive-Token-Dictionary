@@ -8,14 +8,9 @@ Arxiv: 'https://arxiv.org/abs/2401.08209'
 import math
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.utils.checkpoint as checkpoint
-import torch.nn.functional as F
-from basicsr.archs.arch_util import to_2tuple, trunc_normal_
 from fairscale.nn import checkpoint_wrapper
-
-from basicsr.utils.registry import ARCH_REGISTRY
-
+import torchinfo
+from timm.models.layers import to_2tuple, trunc_normal_
 
 # Shuffle operation for Categorization and UnCategorization operations.
 def index_reverse(index):
@@ -37,12 +32,13 @@ def feature_shuffle(x, index):
     return shuffled_x
 
 
-class dwconv(nn.Module):
+class dwconv(torch.nn.Module):
     def __init__(self, hidden_features, kernel_size=5):
         super(dwconv, self).__init__()
-        self.depthwise_conv = nn.Sequential(
-            nn.Conv2d(hidden_features, hidden_features, kernel_size=kernel_size, stride=1, padding=(kernel_size - 1) // 2, dilation=1,
-                      groups=hidden_features), nn.GELU())
+        self.depthwise_conv = torch.nn.Sequential(
+            torch.nn.Conv2d(in_channels=hidden_features,out_channels= hidden_features, kernel_size=kernel_size, stride=1, padding=(kernel_size - 1) // 2, dilation=1,
+                      groups=hidden_features),
+            torch.nn.GELU())
         self.hidden_features = hidden_features
 
     def forward(self,x,x_size):
@@ -52,15 +48,15 @@ class dwconv(nn.Module):
         return x
 
 
-class ConvFFN(nn.Module):
-    def __init__(self, in_features, hidden_features=None, out_features=None, kernel_size=5, act_layer=nn.GELU):
+class ConvFFN(torch.nn.Module):
+    def __init__(self, in_features, hidden_features=None, out_features=None, kernel_size=5, act_layer=torch.nn.GELU):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.fc1 = torch.nn.Linear(in_features=in_features,out_features= hidden_features)
         self.act = act_layer()
         self.dwconv = dwconv(hidden_features=hidden_features, kernel_size=kernel_size)
-        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.fc2 = torch.nn.Linear(in_features=hidden_features,out_features= out_features)
 
     def forward(self, x, x_size):
         x = self.fc1(x)
@@ -101,7 +97,7 @@ def window_reverse(windows, window_size, h, w):
     return x
 
 
-class WindowAttention(nn.Module):
+class WindowAttention(torch.nn.Module):
     r"""
     Shifted Window-based Multi-head Self-Attention
 
@@ -122,13 +118,13 @@ class WindowAttention(nn.Module):
         self.scale = head_dim**-0.5
 
         # define a parameter table of relative position bias
-        self.relative_position_bias_table = nn.Parameter(
+        self.relative_position_bias_table = torch.nn.Parameter(
             torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
 
-        self.proj = nn.Linear(dim, dim)
+        self.proj = torch.nn.Linear(dim, dim)
 
         trunc_normal_(self.relative_position_bias_table, std=.02)
-        self.softmax = nn.Softmax(dim=-1)
+        self.softmax = torch.nn.Softmax(dim=-1)
 
     def forward(self, qkv, rpi, mask=None):
         r"""
@@ -176,7 +172,7 @@ class WindowAttention(nn.Module):
         return flops
 
 
-class ATD_CA(nn.Module):
+class ATD_CA(torch.nn.Module):
     r""" 
     Adaptive Token Dictionary Cross-Attention.
 
@@ -190,19 +186,19 @@ class ATD_CA(nn.Module):
 
     def __init__(self, dim, input_resolution, num_tokens=64, reducted_dim=10, qkv_bias=True):
 
-        super().__init__()
+        super(ATD_CA,self).__init__()
         self.dim = dim
         self.input_resolution = input_resolution
         self.num_tokens = num_tokens
         self.rc = reducted_dim
         self.qkv_bias = qkv_bias
 
-        self.wq = nn.Linear(dim, reducted_dim, bias=qkv_bias)
-        self.wk = nn.Linear(dim, reducted_dim, bias=qkv_bias)
-        self.wv = nn.Linear(dim, dim, bias=qkv_bias)
+        self.wq =torch.nn.Linear(in_features=dim, out_features=reducted_dim, bias=qkv_bias)
+        self.wk = torch.nn.Linear(in_features=dim,out_features= reducted_dim, bias=qkv_bias)
+        self.wv = torch.nn.Linear(in_features=dim,out_features= dim, bias=qkv_bias)
 
-        self.scale = nn.Parameter(torch.ones([self.num_tokens]) * 0.5, requires_grad=True)
-        self.softmax = nn.Softmax(dim=-1)
+        self.scale = torch.nn.Parameter(torch.ones([self.num_tokens]) * 0.5, requires_grad=True)
+        self.softmax = torch.nn.Softmax(dim=-1)
 
     def forward(self, x, td, x_size):
         r"""
@@ -215,25 +211,20 @@ class ATD_CA(nn.Module):
         b, n, c = x.shape
         b, m, c = td.shape
         rc = self.rc
-        
         # Q: b, n, c
         q = self.wq(x)
         # K: b, m, c
         k = self.wk(td)
         # V: b, m, c
         v = self.wv(td)
-
         # Q @ K^T
-        attn = (F.normalize(q, dim=-1) @ F.normalize(k, dim=-1).transpose(-2, -1))  # b, n, n_tk
-        scale = torch.clamp(self.scale, 0, 1)
+        attn = (torch.nn.functional.normalize(q, dim=-1) @ torch.nn.functional.normalize(k, dim=-1).transpose(-2, -1))  # b, n, n_tk
+        scale = torch.clamp(self.scale,min= 0, max=1)
         attn = attn * (1 + scale * np.log(self.num_tokens))
         attn = self.softmax(attn)
-        
         # Attn * V
         x = (attn @ v).reshape(b, n, c)
-
         return x, attn
-
     def flops(self, n):
         n_tk = self.num_tokens
         flops = 0
@@ -251,7 +242,7 @@ class ATD_CA(nn.Module):
         return flops
     
 
-class AC_MSA(nn.Module):
+class AC_MSA(torch.nn.Module):
     r""" 
     Adaptive Category-based Multihead Self-Attention.
 
@@ -263,22 +254,16 @@ class AC_MSA(nn.Module):
         category_size (int): Number of tokens in each group for global sparse attention. Default: 128
         qkv_bias (bool, optional):  If True, add a learnable bias to query, key, value. Default: True
     """
-
     def __init__(self, dim, input_resolution, num_tokens=64, num_heads=4, category_size=128, qkv_bias=True):
-
-        super().__init__()
+        super(AC_MSA,self).__init__()
         self.dim = dim
         self.input_resolution = input_resolution
         self.num_tokens = num_tokens
         self.num_heads = num_heads
         self.category_size = category_size
-
-        # self.wqkv = nn.Linear(dim, 3 * dim, bias=qkv_bias)
-        self.proj = nn.Linear(dim, dim, bias=qkv_bias)
-
-        self.logit_scale = nn.Parameter(torch.log(10 * torch.ones((1, 1))), requires_grad=True)
-        self.softmax = nn.Softmax(dim=-1)
-
+        self.proj = torch.nn.Linear(dim, dim, bias=qkv_bias)
+        self.logit_scale = torch.nn.Parameter(torch.log(10 * torch.ones((1, 1))), requires_grad=True)
+        self.softmax = torch.nn.Softmax(dim=-1)
     def forward(self, qkv, sim, x_size):
         """
         Args:
@@ -293,7 +278,6 @@ class AC_MSA(nn.Module):
         b, n, m = sim.shape
         gs = min(n, self.category_size)  # group size
         ng = (n + gs - 1) // gs
-        
         # classify features into groups based on similarity map (sim)
         tk_id = torch.argmax(sim, dim=-1, keepdim=False)
         # sort features by type
@@ -303,45 +287,33 @@ class AC_MSA(nn.Module):
         pad_n = ng * gs - n
         paded_qkv = torch.cat((shuffled_qkv, torch.flip(shuffled_qkv[:, n-pad_n:n, :], dims=[1])), dim=1)
         y = paded_qkv.reshape(b, -1, gs, c3)
-
         qkv = y.reshape(b, ng, gs, 3, self.num_heads, c//self.num_heads).permute(3, 0, 1, 4, 2, 5)  # 3, b, ng, nh, gs, c//nh
         q, k, v = qkv[0], qkv[1], qkv[2]
-
         # Q @ K^T
         attn = (q @ k.transpose(-2, -1))  # b, ng, nh, gs, gs
-
         logit_scale = torch.clamp(self.logit_scale, max=torch.log(torch.tensor(1. / 0.01)).to(qkv.device)).exp()
         attn = attn * logit_scale
-
         # softmax
         attn = self.softmax(attn)  # b, ng, nh, gs, gs
-
         # Attn * V
         y = (attn @ v).permute(0, 1, 3, 2, 4).reshape(b, n+pad_n, c)[:, :n, :]
-
         x = feature_shuffle(y, x_sort_indices_reverse)
         x = self.proj(x)
-
         return x
-
-
     def flops(self, n):
         flops = 0
-
         # attn = (q @ k.transpose(-2, -1))
         flops += n * self.dim * self.category_size
         #  x = (attn @ v)
         flops += n * self.dim * self.category_size
         # x = self.proj(x)
         flops += n * self.dim * self.dim
-
         return flops
 
 
-class ATDTransformerLayer(nn.Module):
+class ATDTransformerLayer(torch.nn.Module):
     r"""
     ATD Transformer Layer
-
     Args:
         dim (int): Number of input channels.
         idx (int): Layer index.
@@ -373,11 +345,11 @@ class ATDTransformerLayer(nn.Module):
                  convffn_kernel_size,
                  mlp_ratio,
                  qkv_bias=True,
-                 act_layer=nn.GELU,
-                 norm_layer=nn.LayerNorm,
+                 act_layer=torch.nn.GELU,
+                 norm_layer=torch.nn.LayerNorm,
                  is_last=False,
                  ):
-        super().__init__()
+        super(ATDTransformerLayer,self).__init__()
 
         self.dim = dim
         self.input_resolution = input_resolution
@@ -387,20 +359,17 @@ class ATDTransformerLayer(nn.Module):
         self.mlp_ratio = mlp_ratio
         self.convffn_kernel_size = convffn_kernel_size
         self.num_tokens=num_tokens
-        self.softmax = nn.Softmax(dim=-1)
-        self.lrelu = nn.LeakyReLU()
-        self.sigmoid = nn.Sigmoid()
+        self.softmax = torch.nn.Softmax(dim=-1)
+        self.lrelu = torch.nn.LeakyReLU()
+        self.sigmoid = torch.nn.Sigmoid()
         self.reducted_dim = reducted_dim
         self.is_last = is_last
-
         self.norm1 = norm_layer(dim)
         self.norm2 = norm_layer(dim)
         if not is_last:
-            self.norm3 = nn.InstanceNorm1d(num_tokens, affine=True)
-            self.sigma = nn.Parameter(torch.zeros([num_tokens, 1]), requires_grad=True)
-
-        self.wqkv = nn.Linear(dim, 3*dim, bias=qkv_bias)
-
+            self.norm3 = torch.nn.InstanceNorm1d(num_tokens, affine=True)
+            self.sigma = torch.nn.Parameter(torch.zeros([num_tokens, 1]), requires_grad=True)
+        self.wqkv = torch.nn.Linear(dim, 3*dim, bias=qkv_bias)
         self.attn_win = WindowAttention(
             self.dim,
             window_size=to_2tuple(self.window_size),
@@ -422,29 +391,21 @@ class ATDTransformerLayer(nn.Module):
             category_size=category_size,
             qkv_bias=qkv_bias,
         )
-
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.convffn = ConvFFN(in_features=dim, hidden_features=mlp_hidden_dim, kernel_size=convffn_kernel_size, act_layer=act_layer)
-
-
     def forward(self, x, td, x_size, params):
         h, w = x_size
         b, n, c = x.shape
         c3 = 3 * c
-
         shortcut = x
         x = self.norm1(x)
         qkv = self.wqkv(x)
-
         # ATD_CA
         x_atd, sim_atd = self.attn_atd(x, td, x_size)  # x_atd: (b, n, c)  sim_atd: (b, n,)
-
         # AC_MSA
-        x_aca = self.attn_aca(qkv, sim_atd, x_size) 
-
+        x_aca = self.attn_aca(qkv, sim_atd, x_size)
         # SW-MSA
         qkv = qkv.reshape(b, h, w, c3)
-
         # cyclic shift
         if self.shift_size > 0:
             shifted_qkv = torch.roll(qkv, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
@@ -456,14 +417,11 @@ class ATDTransformerLayer(nn.Module):
         # partition windows
         x_windows = window_partition(shifted_qkv, self.window_size)  # nw*b, window_size, window_size, c
         x_windows = x_windows.view(-1, self.window_size * self.window_size, c3)  # nw*b, window_size*window_size, c
-
         # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
         attn_windows = self.attn_win(x_windows, rpi=params['rpi_sa'], mask=attn_mask)
-
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, c)
         shifted_x = window_reverse(attn_windows, self.window_size, h, w)  # b h' w' c
-
         # reverse cyclic shift
         if self.shift_size > 0:
             attn_x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
@@ -471,59 +429,49 @@ class ATDTransformerLayer(nn.Module):
             attn_x = shifted_x
         x_win = attn_x
         x = shortcut + x_win.view(b, n, c) + x_atd + x_aca
-
         # FFN
         x = x + self.convffn(self.norm2(x), x_size)
-
         b, N, c = x.shape
         b, n, c = td.shape
-        
         # Adaptive Token Refinement
         if not self.is_last:
             mask_soft = self.softmax(self.norm3(sim_atd.transpose(-1, -2)))
             mask_x = x.reshape(b, N, c)
             s = self.sigmoid(self.sigma)
             td = s*td + (1-s)*torch.einsum('btn,bnc->btc', mask_soft, mask_x)
-
         return x, td
 
 
     def flops(self, input_resolution=None):
         flops = 0
         h, w = self.input_resolution if input_resolution is None else input_resolution
-
         # qkv = self.wqkv(x)
         flops += self.dim * 3 * self.dim * h * w
-
         # W-MSA/SW-MSA, ATD-CA, AC-MSA
         nw = h * w / self.window_size / self.window_size
         flops += nw * self.attn_win.flops(self.window_size * self.window_size)
         flops += self.attn_atd.flops(h * w)
         flops += self.attn_aca.flops(h * w)
-
         # mlp
         flops += 2 * h * w * self.dim * self.dim * self.mlp_ratio
         flops += h * w * self.dim * self.convffn_kernel_size**2 * self.mlp_ratio
-
         return flops
 
 
-class PatchMerging(nn.Module):
+class PatchMerging(torch.nn.Module):
     r""" Patch Merging Layer.
-
     Args:
         input_resolution (tuple[int]): Resolution of input feature.
         dim (int): Number of input channels.
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
 
-    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm):
-        super().__init__()
+    def __init__(self, input_resolution, dim, norm_layer=torch.nn.LayerNorm):
+        super(PatchMerging,self).__init__()
         self.input_resolution = input_resolution
         self.dim = dim
-        self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
+        self.reduction = torch.nn.Linear(4 * dim, 2 * dim, bias=False)
         self.norm = norm_layer(4 * dim)
-
     def forward(self, x):
         """
         x: b, h*w, c
@@ -532,32 +480,26 @@ class PatchMerging(nn.Module):
         b, seq_len, c = x.shape
         assert seq_len == h * w, 'input feature has wrong size'
         assert h % 2 == 0 and w % 2 == 0, f'x size ({h}*{w}) are not even.'
-
         x = x.view(b, h, w, c)
-
         x0 = x[:, 0::2, 0::2, :]  # b h/2 w/2 c
         x1 = x[:, 1::2, 0::2, :]  # b h/2 w/2 c
         x2 = x[:, 0::2, 1::2, :]  # b h/2 w/2 c
         x3 = x[:, 1::2, 1::2, :]  # b h/2 w/2 c
         x = torch.cat([x0, x1, x2, x3], -1)  # b h/2 w/2 4*c
         x = x.view(b, -1, 4 * c)  # b h/2*w/2 4*c
-
         x = self.norm(x)
         x = self.reduction(x)
-
         return x
 
     def extra_repr(self) -> str:
         return f'input_resolution={self.input_resolution}, dim={self.dim}'
-
     def flops(self, input_resolution=None):
         h, w = self.input_resolution if input_resolution is None else input_resolution
         flops = h * w * self.dim
         flops += (h // 2) * (w // 2) * 4 * self.dim * 2 * self.dim
         return flops
 
-
-class BasicBlock(nn.Module):
+class BasicBlock(torch.nn.Module):
     """ A basic ATD Block for one stage.
 
     Args:
@@ -591,18 +533,16 @@ class BasicBlock(nn.Module):
                  reducted_dim,
                  mlp_ratio=4.,
                  qkv_bias=True,
-                 norm_layer=nn.LayerNorm,
+                 norm_layer=torch.nn.LayerNorm,
                  downsample=None,
                  use_checkpoint=False, ):
-
-        super().__init__()
+        super(BasicBlock,self).__init__()
         self.dim = dim
         self.input_resolution = input_resolution
         self.depth = depth
         self.use_checkpoint = use_checkpoint
         self.idx = idx
-
-        self.layers = nn.ModuleList()
+        self.layers = torch.nn.ModuleList()
         for i in range(depth):
             self.layers.append(
                 ATDTransformerLayer(
@@ -630,7 +570,7 @@ class BasicBlock(nn.Module):
             self.downsample = None
 
         # Token Dictionary
-        self.td = nn.Parameter(torch.randn([num_tokens, dim]), requires_grad=True)
+        self.td = torch.nn.Parameter(torch.randn([num_tokens, dim]), requires_grad=True)
 
     def forward(self, x, x_size, params):
         b, n, c = x.shape
@@ -659,9 +599,8 @@ class BasicBlock(nn.Module):
         return flops
 
 
-class ATDB(nn.Module):
+class ATDB(torch.nn.Module):
     """Adaptive Token Dictionary Block (ATDB).
-
     Args:
         dim (int): Number of input channels.
         input_resolution (tuple[int]): Input resolution.
@@ -677,7 +616,6 @@ class ATDB(nn.Module):
         patch_size: Patch size.
         resi_connection: The convolutional block before residual connection.
     """
-
     def __init__(self,
                  dim,
                  idx,
@@ -691,23 +629,19 @@ class ATDB(nn.Module):
                  convffn_kernel_size,
                  mlp_ratio,
                  qkv_bias=True,
-                 norm_layer=nn.LayerNorm,
+                 norm_layer=torch.nn.LayerNorm,
                  downsample=None,
                  use_checkpoint=False,
                  img_size=224,
                  patch_size=4,
                  resi_connection='1conv', ):
         super(ATDB, self).__init__()
-
         self.dim = dim
         self.input_resolution = input_resolution
-
         self.patch_embed = PatchEmbed(
             img_size=img_size, patch_size=patch_size, in_chans=0, embed_dim=dim, norm_layer=None)
-
         self.patch_unembed = PatchUnEmbed(
             img_size=img_size, patch_size=patch_size, in_chans=0, embed_dim=dim, norm_layer=None)
-
         self.residual_group = BasicBlock(
             dim=dim,
             input_resolution=input_resolution,
@@ -725,19 +659,18 @@ class ATDB(nn.Module):
             downsample=downsample,
             use_checkpoint=use_checkpoint,
         )
-
         if resi_connection == '1conv':
-            self.conv = nn.Conv2d(dim, dim, 3, 1, 1)
+            self.conv = torch.nn.Conv2d(dim, dim, 3, 1, 1)
         elif resi_connection == '3conv':
             # to save parameters and memory
-            self.conv = nn.Sequential(
-                nn.Conv2d(dim, dim // 4, 3, 1, 1), nn.LeakyReLU(negative_slope=0.2, inplace=True),
-                nn.Conv2d(dim // 4, dim // 4, 1, 1, 0), nn.LeakyReLU(negative_slope=0.2, inplace=True),
-                nn.Conv2d(dim // 4, dim, 3, 1, 1))
-
+            self.conv = torch.nn.Sequential(
+                torch.nn.Conv2d(dim, dim // 4, 3, 1, 1),
+                torch.nn.LeakyReLU(negative_slope=0.2, inplace=True),
+                torch.nn.Conv2d(dim // 4, dim // 4, 1, 1, 0),
+                torch.nn.LeakyReLU(negative_slope=0.2, inplace=True),
+                torch.nn.Conv2d(dim // 4, dim, 3, 1, 1))
     def forward(self, x, x_size, params):
         return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size, params), x_size))) + x
-
     def flops(self, input_resolution=None):
         flops = 0
         flops += self.residual_group.flops(input_resolution)
@@ -745,11 +678,10 @@ class ATDB(nn.Module):
         flops += h * w * self.dim * self.dim * 9
         flops += self.patch_embed.flops(input_resolution)
         flops += self.patch_unembed.flops(input_resolution)
-
         return flops
 
 
-class PatchEmbed(nn.Module):
+class PatchEmbed(torch.nn.Module):
     r""" Image to Patch Embedding
 
     Args:
@@ -759,9 +691,8 @@ class PatchEmbed(nn.Module):
         embed_dim (int): Number of linear projection output channels. Default: 96.
         norm_layer (nn.Module, optional): Normalization layer. Default: None
     """
-
     def __init__(self, img_size=224, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None):
-        super().__init__()
+        super(PatchEmbed,self).__init__()
         img_size = to_2tuple(img_size)
         patch_size = to_2tuple(patch_size)
         patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1]]
@@ -769,15 +700,12 @@ class PatchEmbed(nn.Module):
         self.patch_size = patch_size
         self.patches_resolution = patches_resolution
         self.num_patches = patches_resolution[0] * patches_resolution[1]
-
         self.in_chans = in_chans
         self.embed_dim = embed_dim
-
         if norm_layer is not None:
             self.norm = norm_layer(embed_dim)
         else:
             self.norm = None
-
     def forward(self, x):
         x = x.flatten(2).transpose(1, 2)  # b Ph*Pw c
         if self.norm is not None:
@@ -792,9 +720,8 @@ class PatchEmbed(nn.Module):
         return flops
 
 
-class PatchUnEmbed(nn.Module):
+class PatchUnEmbed(torch.nn.Module):
     r""" Image to Patch Unembedding
-
     Args:
         img_size (int): Image size.  Default: 224.
         patch_size (int): Patch token size. Default: 4.
@@ -804,7 +731,7 @@ class PatchUnEmbed(nn.Module):
     """
 
     def __init__(self, img_size=224, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None):
-        super().__init__()
+        super(PatchUnEmbed,self).__init__()
         img_size = to_2tuple(img_size)
         patch_size = to_2tuple(patch_size)
         patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1]]
@@ -812,10 +739,8 @@ class PatchUnEmbed(nn.Module):
         self.patch_size = patch_size
         self.patches_resolution = patches_resolution
         self.num_patches = patches_resolution[0] * patches_resolution[1]
-
         self.in_chans = in_chans
         self.embed_dim = embed_dim
-
     def forward(self, x, x_size):
         x = x.transpose(1, 2).view(x.shape[0], self.embed_dim, x_size[0], x_size[1])  # b Ph*Pw c
         return x
@@ -825,9 +750,8 @@ class PatchUnEmbed(nn.Module):
         return flops
 
 
-class Upsample(nn.Sequential):
+class Upsample(torch.nn.Sequential):
     """Upsample module.
-
     Args:
         scale (int): Scale factor. Supported scales: 2^n and 3.
         num_feat (int): Channel number of intermediate features.
@@ -839,11 +763,11 @@ class Upsample(nn.Sequential):
         self.num_feat = num_feat
         if (scale & (scale - 1)) == 0:  # scale = 2^n
             for _ in range(int(math.log(scale, 2))):
-                m.append(nn.Conv2d(num_feat, 4 * num_feat, 3, 1, 1))
-                m.append(nn.PixelShuffle(2))
+                m.append(torch.nn.Conv2d(num_feat, 4 * num_feat, 3, 1, 1))
+                m.append(torch.nn.PixelShuffle(2))
         elif scale == 3:
-            m.append(nn.Conv2d(num_feat, 9 * num_feat, 3, 1, 1))
-            m.append(nn.PixelShuffle(3))
+            m.append(torch.nn.Conv2d(num_feat, 9 * num_feat, 3, 1, 1))
+            m.append(torch.nn.PixelShuffle(3))
         else:
             raise ValueError(f'scale {scale} is not supported. Supported scales: 2^n and 3.')
         super(Upsample, self).__init__(*m)
@@ -858,7 +782,7 @@ class Upsample(nn.Sequential):
         return flops
 
 
-class UpsampleOneStep(nn.Sequential):
+class UpsampleOneStep(torch.nn.Sequential):
     """UpsampleOneStep module (the difference with Upsample is that it always only has 1conv + 1pixelshuffle)
        Used in lightweight SR to save parameters.
 
@@ -872,8 +796,8 @@ class UpsampleOneStep(nn.Sequential):
         self.num_feat = num_feat
         self.input_resolution = input_resolution
         m = []
-        m.append(nn.Conv2d(num_feat, (scale ** 2) * num_out_ch, 3, 1, 1))
-        m.append(nn.PixelShuffle(scale))
+        m.append(torch.nn.Conv2d(num_feat, (scale ** 2) * num_out_ch, 3, 1, 1))
+        m.append(torch.nn.PixelShuffle(scale))
         super(UpsampleOneStep, self).__init__(*m)
 
     def flops(self, input_resolution):
@@ -883,8 +807,7 @@ class UpsampleOneStep(nn.Sequential):
         return flops
 
 
-@ARCH_REGISTRY.register()
-class ATD(nn.Module):
+class ATD(torch.nn.Module):
     r""" ATD
         A PyTorch impl of : `Transcending the Limit of Local Window: Advanced Super-Resolution Transformer 
                              with Adaptive Token Dictionary`.
@@ -905,7 +828,7 @@ class ATD(nn.Module):
         use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False
         upscale: Upscale factor. 2/3/4/8 for image SR, 1 for denoising and compress artifact reduction
         img_range: Image range. 1. or 255.
-        upsampler: The reconstruction reconstruction module. 'pixelshuffle'/'pixelshuffledirect'/'nearest+conv'/None
+        upsampler: The reconstruction  module. 'pixelshuffle'/'pixelshuffledirect'/'nearest+conv'/None
         resi_connection: The convolutional block before residual connection. '1conv'/'3conv'
     """
 
@@ -923,7 +846,7 @@ class ATD(nn.Module):
                  convffn_kernel_size=5,
                  mlp_ratio=2.,
                  qkv_bias=True,
-                 norm_layer=nn.LayerNorm,
+                 norm_layer=torch.nn.LayerNorm,
                  ape=False,
                  patch_norm=True,
                  use_checkpoint=False,
@@ -932,7 +855,7 @@ class ATD(nn.Module):
                  upsampler='',
                  resi_connection='1conv',
                  **kwargs):
-        super().__init__()
+        super(ATD,self).__init__()
         num_in_ch = in_chans
         num_out_ch = in_chans
         num_feat = 64
@@ -946,7 +869,7 @@ class ATD(nn.Module):
         self.upsampler = upsampler
 
         # ------------------------- 1, shallow feature extraction ------------------------- #
-        self.conv_first = nn.Conv2d(num_in_ch, embed_dim, 3, 1, 1)
+        self.conv_first = torch.nn.Conv2d(num_in_ch, embed_dim, 3, 1, 1)
 
         # ------------------------- 2, deep feature extraction ------------------------- #
         self.num_layers = len(depths)
@@ -956,7 +879,6 @@ class ATD(nn.Module):
         self.num_features = embed_dim
         self.mlp_ratio = mlp_ratio
         self.window_size = window_size
-
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(
             img_size=img_size,
@@ -978,7 +900,7 @@ class ATD(nn.Module):
 
         # absolute position embedding
         if self.ape:
-            self.absolute_pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
+            self.absolute_pos_embed = torch.nn.Parameter(torch.zeros(1, num_patches, embed_dim))
             trunc_normal_(self.absolute_pos_embed, std=.02)
 
         # relative position index
@@ -986,7 +908,7 @@ class ATD(nn.Module):
         self.register_buffer('relative_position_index_SA', relative_position_index_SA)
 
         # build Residual Adaptive Token Dictionary Blocks (ATDB)
-        self.layers = nn.ModuleList()
+        self.layers = torch.nn.ModuleList()
         for i_layer in range(self.num_layers):
             layer = ATDB(
                 dim=embed_dim,
@@ -1013,21 +935,24 @@ class ATD(nn.Module):
 
         # build the last conv layer in deep feature extraction
         if resi_connection == '1conv':
-            self.conv_after_body = nn.Conv2d(embed_dim, embed_dim, 3, 1, 1)
+            self.conv_after_body = torch.nn.Conv2d(embed_dim, embed_dim, 3, 1, 1)
         elif resi_connection == '3conv':
             # to save parameters and memory
-            self.conv_after_body = nn.Sequential(
-                nn.Conv2d(embed_dim, embed_dim // 4, 3, 1, 1), nn.LeakyReLU(negative_slope=0.2, inplace=True),
-                nn.Conv2d(embed_dim // 4, embed_dim // 4, 1, 1, 0), nn.LeakyReLU(negative_slope=0.2, inplace=True),
-                nn.Conv2d(embed_dim // 4, embed_dim, 3, 1, 1))
+            self.conv_after_body = torch.nn.Sequential(
+                torch.nn.Conv2d(embed_dim, embed_dim // 4, 3, 1, 1),
+                torch.nn.LeakyReLU(negative_slope=0.2, inplace=True),
+                torch.nn.Conv2d(embed_dim // 4, embed_dim // 4, 1, 1, 0),
+                torch.nn.LeakyReLU(negative_slope=0.2, inplace=True),
+                torch.nn.Conv2d(embed_dim // 4, embed_dim, 3, 1, 1))
 
         # ------------------------- 3, high quality image reconstruction ------------------------- #
         if self.upsampler == 'pixelshuffle':
             # for classical SR
-            self.conv_before_upsample = nn.Sequential(
-                nn.Conv2d(embed_dim, num_feat, 3, 1, 1), nn.LeakyReLU(inplace=True))
+            self.conv_before_upsample = torch.nn.Sequential(
+                torch.nn.Conv2d(embed_dim, num_feat, 3, 1, 1),
+                torch.nn.LeakyReLU(inplace=True))
             self.upsample = Upsample(upscale, num_feat)
-            self.conv_last = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
+            self.conv_last = torch.nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
         elif self.upsampler == 'pixelshuffledirect':
             # for lightweight SR (to save parameters)
             self.upsample = UpsampleOneStep(upscale, embed_dim, num_out_ch,
@@ -1035,27 +960,28 @@ class ATD(nn.Module):
         elif self.upsampler == 'nearest+conv':
             # for real-world SR (less artifacts)
             assert self.upscale == 4, 'only support x4 now.'
-            self.conv_before_upsample = nn.Sequential(
-                nn.Conv2d(embed_dim, num_feat, 3, 1, 1), nn.LeakyReLU(inplace=True))
-            self.conv_up1 = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
-            self.conv_up2 = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
-            self.conv_hr = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
-            self.conv_last = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
-            self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+            self.conv_before_upsample = torch.nn.Sequential(
+                torch.nn.Conv2d(embed_dim, num_feat, 3, 1, 1),
+                torch.nn.LeakyReLU(inplace=True))
+            self.conv_up1 = torch.nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+            self.conv_up2 = torch.nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+            self.conv_hr = torch.nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+            self.conv_last = torch.nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
+            self.lrelu = torch.nn.LeakyReLU(negative_slope=0.2, inplace=True)
         else:
             # for image denoising and JPEG compression artifact reduction
-            self.conv_last = nn.Conv2d(embed_dim, num_out_ch, 3, 1, 1)
+            self.conv_last = torch.nn.Conv2d(embed_dim, num_out_ch, 3, 1, 1)
 
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
+        if isinstance(m, torch.nn.Linear):
             trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
+            if isinstance(m, torch.nn.Linear) and m.bias is not None:
+                torch.nn.init.constant_(m.bias, 0)
+        elif isinstance(m, torch.nn.LayerNorm):
+            torch.nn.init.constant_(m.bias, 0)
+            torch.nn.init.constant_(m.weight, 1.0)
 
     @torch.jit.ignore
     def no_weight_decay(self):
@@ -1070,13 +996,10 @@ class ATD(nn.Module):
         x = self.patch_embed(x)
         if self.ape:
             x = x + self.absolute_pos_embed
-
         for layer in self.layers:
             x = layer(x, x_size, params)
-
         x = self.norm(x)  # b seq_len c
         x = self.patch_unembed(x, x_size)
-
         return x
     
     def calculate_rpi_sa(self):
@@ -1207,4 +1130,4 @@ if __name__ == '__main__':
     # Test
     _input = torch.randn([2, 3, 64, 64])
     output = model(_input)
-    print(output.shape)
+    torchinfo.summary(model=model,input_data=_input)
