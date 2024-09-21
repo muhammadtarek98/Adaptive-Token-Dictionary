@@ -5,8 +5,7 @@ import warnings
 from itertools import repeat
 from torch.nn.modules.batchnorm import _BatchNorm
 
-# from basicsr.ops.dcn import ModulatedDeformConvPack, modulated_deform_conv
-from basicsr.utils import get_root_logger
+from Adaptive_Token_Dictionary.basicsr.utils import get_root_logger
 
 
 @torch.no_grad()

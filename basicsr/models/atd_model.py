@@ -1,6 +1,6 @@
 import torch
 
-from basicsr.utils.registry import MODEL_REGISTRY
+from Adaptive_Token_Dictionary.basicsr.utils.registry import MODEL_REGISTRY
 from .base_model import BaseModel
 from .sr_model import SRModel
 

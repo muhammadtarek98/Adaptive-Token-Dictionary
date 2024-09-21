@@ -4,12 +4,10 @@ import os
 from os import path as osp
 import sys
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from basicsr.data import build_dataloader, build_dataset
-from basicsr.models import build_model
-from basicsr.utils import get_env_info, get_root_logger, get_time_str, make_exp_dirs
-from basicsr.utils.options import dict2str, parse_options
+from Adaptive_Token_Dictionary.basicsr.data import build_dataloader, build_dataset
+from Adaptive_Token_Dictionary.basicsr.models import build_model
+from Adaptive_Token_Dictionary.basicsr.utils import get_env_info, get_root_logger, get_time_str, make_exp_dirs
+from Adaptive_Token_Dictionary.basicsr.utils.options import dict2str, parse_options
 
 
 def test_pipeline(root_path):
